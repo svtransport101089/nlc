@@ -1,18 +1,24 @@
 
 import { GoogleGenAI } from "@google/genai";
-import { GroupHeaderData, Member, QuarterlyUpdate } from "../types";
+import { GroupHeaderData, Member, QuarterlyUpdate } from "../types"; // Removed Leader import
 
 export const analyzeReport = async (
   header: GroupHeaderData,
   members: Member[],
-  updates: QuarterlyUpdate[]
+  updates: QuarterlyUpdate[],
+  // Removed leaders: Leader[] parameter
 ): Promise<string> => {
   const ai = new GoogleGenAI({ apiKey: process.env.API_KEY || '' });
+
+  // Use header.leaderName and header.coLeader directly
+  const leaderName = header.leaderName || 'Unassigned';
+  const coLeaderName = header.coLeader || 'Unassigned';
   
   const prompt = `
     Analyze this leadership report for year ${header.year}.
     
-    Leader: ${header.leaderName}
+    Leader: ${leaderName}
+    Co-Leader: ${coLeaderName}
     Region: ${header.region}
     Members Count: ${members.length}
     
@@ -25,7 +31,7 @@ export const analyzeReport = async (
     Please provide:
     1. A summary of progress.
     2. Key areas of concern.
-    3. Actionable recommendations for the leader.
+    3. Actionable recommendations for the leader and co-leader.
     
     Format the response in clean markdown.
   `;

@@ -5,14 +5,15 @@ import { GroupHeaderData } from '../types';
 interface GroupHeaderProps {
   data: GroupHeaderData;
   onChange: (data: GroupHeaderData) => void;
+  isEnabled: boolean; // New prop to enable/disable editing
 }
 
-const GroupHeader: React.FC<GroupHeaderProps> = ({ data, onChange }) => {
-  const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+const GroupHeader: React.FC<GroupHeaderProps> = ({ data, onChange, isEnabled }) => {
+  const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
     onChange({ ...data, [e.target.name]: e.target.value });
   };
 
-  const fields: { label: string; name: keyof GroupHeaderData }[] = [
+  const fields: { label: string; name: keyof GroupHeaderData; }[] = [
     { label: 'NLC No', name: 'nlcNo' },
     { label: 'Region', name: 'region' },
     { label: 'Area Pastor', name: 'areaPastor' },
@@ -36,9 +37,10 @@ const GroupHeader: React.FC<GroupHeaderProps> = ({ data, onChange }) => {
             <input
               type="text"
               name={field.name}
-              value={data[field.name]}
+              value={data[field.name] as string}
               onChange={handleChange}
-              className="px-4 py-3 bg-slate-50 border-2 border-slate-100 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:bg-white focus:border-transparent transition-all outline-none font-medium text-slate-700 shadow-sm"
+              disabled={!isEnabled} // Disable based on isEnabled prop
+              className={`px-4 py-3 bg-slate-50 border-2 border-slate-100 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:bg-white focus:border-transparent transition-all outline-none font-medium text-slate-700 shadow-sm ${!isEnabled ? 'opacity-60 cursor-not-allowed' : ''}`}
               placeholder={`Enter ${field.label.toLowerCase()}`}
             />
           </div>

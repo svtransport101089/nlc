@@ -1,10 +1,11 @@
 
+
 export interface GroupHeaderData {
   nlcNo: string;
   region: string;
   areaPastor: string;
-  leaderName: string;
-  coLeader: string;
+  leaderName: string; // Reverted to string
+  coLeader: string; // Reverted to string
   year: string;
 }
 
@@ -24,6 +25,13 @@ export interface QuarterlyUpdate {
   q2: string;
   q3: string;
   q4: string;
+}
+
+export interface NLCReport {
+  id: string; // Unique ID for each NLC Report
+  header: GroupHeaderData;
+  members: Member[];
+  updates: QuarterlyUpdate[];
 }
 
 export const CATEGORIES = [

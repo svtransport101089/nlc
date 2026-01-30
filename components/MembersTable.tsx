@@ -5,15 +5,18 @@ import { Member } from '../types';
 interface MembersTableProps {
   members: Member[];
   onUpdate: (members: Member[]) => void;
+  isEnabled: boolean; // New prop to enable/disable editing
 }
 
-const MembersTable: React.FC<MembersTableProps> = ({ members, onUpdate }) => {
+const MembersTable: React.FC<MembersTableProps> = ({ members, onUpdate, isEnabled }) => {
   const handleMemberChange = (id: string, field: keyof Member, value: string | number) => {
+    if (!isEnabled) return; // Prevent changes if disabled
     const updated = members.map(m => m.id === id ? { ...m, [field]: value } : m);
     onUpdate(updated);
   };
 
   const addMember = () => {
+    if (!isEnabled) return;
     const newMember: Member = {
       id: Math.random().toString(36).substr(2, 9),
       sn: members.length + 1,
@@ -25,11 +28,12 @@ const MembersTable: React.FC<MembersTableProps> = ({ members, onUpdate }) => {
   };
 
   const removeMember = (id: string) => {
+    if (!isEnabled) return;
     onUpdate(members.filter(m => m.id !== id).map((m, idx) => ({ ...m, sn: idx + 1 })));
   };
 
   return (
-    <div className="bg-white rounded-xl border border-slate-200 overflow-hidden shadow-sm flex flex-col h-full">
+    <div className={`bg-white rounded-xl border border-slate-200 overflow-hidden shadow-sm flex flex-col h-full ${!isEnabled ? 'opacity-60' : ''}`}>
       <div className="bg-slate-100 px-4 py-3 border-b border-slate-200 flex justify-between items-center">
         <div>
           <h2 className="text-slate-900 font-bold uppercase tracking-widest text-[10px]">Active Members</h2>
@@ -37,7 +41,8 @@ const MembersTable: React.FC<MembersTableProps> = ({ members, onUpdate }) => {
         </div>
         <button 
           onClick={addMember}
-          className="bg-indigo-900 hover:bg-black text-white px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-tight transition-all flex items-center gap-1 print:hidden"
+          disabled={!isEnabled} // Disable button
+          className="bg-indigo-900 hover:bg-black text-white px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-tight transition-all flex items-center gap-1 print:hidden disabled:opacity-50 disabled:cursor-not-allowed"
         >
           <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" d="M12 4v16m8-8H4" /></svg>
           Add
@@ -63,7 +68,8 @@ const MembersTable: React.FC<MembersTableProps> = ({ members, onUpdate }) => {
                     type="text"
                     value={member.name}
                     onChange={(e) => handleMemberChange(member.id, 'name', e.target.value)}
-                    className="w-full bg-transparent border-none focus:ring-0 font-bold text-slate-700 text-[11px] p-0 placeholder:text-slate-200"
+                    disabled={!isEnabled} // Disable input
+                    className="w-full bg-transparent border-none focus:ring-0 font-bold text-slate-700 text-[11px] p-0 placeholder:text-slate-200 disabled:cursor-not-allowed"
                     placeholder="Name..."
                   />
                 </td>
@@ -71,9 +77,10 @@ const MembersTable: React.FC<MembersTableProps> = ({ members, onUpdate }) => {
                   <select
                     value={member.regNo}
                     onChange={(e) => handleMemberChange(member.id, 'regNo', e.target.value)}
+                    disabled={!isEnabled} // Disable select
                     className={`bg-transparent border-none focus:ring-0 text-[10px] font-black uppercase cursor-pointer p-0 ${
                       member.regNo === 'Registered' ? 'text-green-600' : 'text-amber-500'
-                    }`}
+                    } disabled:cursor-not-allowed disabled:opacity-70`}
                   >
                     <option value="Registered">Reg</option>
                     <option value="Irregular">Irr</option>
@@ -84,14 +91,16 @@ const MembersTable: React.FC<MembersTableProps> = ({ members, onUpdate }) => {
                     type="text"
                     value={member.phone}
                     onChange={(e) => handleMemberChange(member.id, 'phone', e.target.value)}
-                    className="w-full bg-transparent border-none focus:ring-0 font-mono text-[10px] text-slate-500 p-0"
+                    disabled={!isEnabled} // Disable input
+                    className="w-full bg-transparent border-none focus:ring-0 font-mono text-[10px] text-slate-500 p-0 disabled:cursor-not-allowed"
                     placeholder="000..."
                   />
                 </td>
                 <td className="px-3 py-2 print:hidden text-right">
                   <button 
                     onClick={() => removeMember(member.id)}
-                    className="text-slate-200 hover:text-red-600 transition-colors"
+                    disabled={!isEnabled} // Disable button
+                    className="text-slate-200 hover:text-red-600 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                   >
                     <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" /></svg>
                   </button>
