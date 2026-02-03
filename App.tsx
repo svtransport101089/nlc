@@ -1,427 +1,296 @@
 
-import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { GroupHeaderData, Member, QuarterlyUpdate, CATEGORIES, NLCReport } from './types';
 import GroupHeader from './components/GroupHeader';
 import MembersTable from './components/MembersTable';
 import QuarterlyMetrics from './components/QuarterlyMetrics';
-import NLCReportManager from './components/NLCReportManager'; // New import
+import NLCReportManager from './components/NLCReportManager';
 import { analyzeReport } from './services/geminiService';
 
-const STORAGE_KEY = 'nlc_tracker_data_v2'; // Updated storage key for multi-report structure
+const STORAGE_KEY = 'nlc_tracker_v2_fresher_edition';
+
+// Safe check for Google Apps Script Environment
+const google = (window as any).google;
+const isGasEnv = !!(google && google.script && google.script.run);
 
 const App: React.FC = () => {
-  const fileInputRef = useRef<HTMLInputElement>(null);
-
-  const [nlcReports, setNlcReports] = useState<NLCReport[]>(() => {
-    const saved = localStorage.getItem(STORAGE_KEY);
-    if (saved) {
-      try {
-        const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed.nlcReports)) {
-          return parsed.nlcReports;
-        }
-      } catch (e) { console.error("Failed to parse NLC reports from localStorage:", e); }
-    }
-    // Default initial report
-    const initialReport: NLCReport = {
-      id: 'default-nlc-report-1',
-      header: {
-        nlcNo: '102',
-        region: 'South Dist',
-        areaPastor: 'Rev. Smith',
-        leaderName: 'John Doe',
-        coLeader: 'Jane Roe',
-        year: '2026'
-      },
-      members: [
-        { id: '1', sn: 1, name: 'Judah', regNo: 'Registered', phone: '555-0101' },
-        { id: '2', sn: 2, name: 'Isak', regNo: 'Registered', phone: '555-0102' },
-        { id: '3', sn: 3, name: 'Arul Rithis', regNo: 'Irregular', phone: '555-0103' },
-        { id: '4', sn: 4, name: 'Akash', regNo: 'Registered', phone: '555-0104' },
-        { id: '5', sn: 5, name: 'Sam Alwino', regNo: 'Registered', phone: '555-0105' },
-      ],
-      updates: CATEGORIES.map(cat => ({ category: cat, q1: '', q2: '', q3: '', q4: '' })),
-    };
-    return [initialReport];
-  });
-
-  const [selectedReportId, setSelectedReportId] = useState<string | null>(() => {
-    const saved = localStorage.getItem(STORAGE_KEY);
-    if (saved) {
-      try {
-        const savedData = JSON.parse(saved);
-        if (savedData.selectedReportId && savedData.nlcReports.some((r: NLCReport) => r.id === savedData.selectedReportId)) {
-          return savedData.selectedReportId;
-        }
-      } catch (e) { console.error("Failed to parse selected report ID from localStorage:", e); }
-    }
-    // If no saved ID or it's invalid, select the first report if available
-    return nlcReports.length > 0 ? nlcReports[0].id : null;
-  });
-
+  const [nlcReports, setNlcReports] = useState<NLCReport[]>([]);
+  const [selectedReportId, setSelectedReportId] = useState<string | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
+  const [saveStatus, setSaveStatus] = useState<'saved' | 'saving' | 'error'>('saved');
   const [aiResult, setAiResult] = useState<string | null>(null);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
-  const [saveStatus, setSaveStatus] = useState<'saved' | 'saving'>('saved');
 
-  // Derive the current active report
-  const currentReport = useMemo(() => {
-    return nlcReports.find(report => report.id === selectedReportId);
-  }, [nlcReports, selectedReportId]);
+  // --- Helper: Create a fresh, empty report template ---
+  const createBlankReport = (): NLCReport => ({
+    id: `nlc-${Date.now()}`,
+    header: {
+      nlcNo: '001',
+      region: 'Main Region',
+      areaPastor: '',
+      leaderName: 'New Leader',
+      coLeader: '',
+      year: new Date().getFullYear().toString()
+    },
+    members: [{ id: 'm1', sn: 1, name: '', regNo: 'Registered', phone: '' }],
+    updates: CATEGORIES.map(cat => ({ category: cat, q1: '', q2: '', q3: '', q4: '' })),
+  });
 
-  // --- Persistence to localStorage ---
+  // --- 1. Startup: Load Data from Cloud or Local ---
   useEffect(() => {
+    const initApp = async () => {
+      console.log("%c[NLC Tracker] Initializing App...", "color: #4f46e5; font-weight: bold;");
+      setIsLoading(true);
+
+      let savedData: any = null;
+
+      // STEP A: Try to load from Google Apps Script (Cloud)
+      if (isGasEnv) {
+        console.log("[NLC Tracker] Attempting Cloud load...");
+        try {
+          const cloudResult = await new Promise<string | null>((resolve) => {
+            google.script.run
+              .withSuccessHandler(resolve)
+              .withFailureHandler((err: any) => {
+                console.error("[NLC Tracker] Cloud load failed:", err);
+                resolve(null);
+              })
+              .loadReports();
+          });
+          if (cloudResult) {
+            savedData = JSON.parse(cloudResult);
+            console.log("[NLC Tracker] Cloud load successful.");
+          }
+        } catch (e) {
+          console.error("[NLC Tracker] JSON parse error (Cloud):", e);
+        }
+      }
+
+      // STEP B: Fallback to Browser Storage if Cloud is empty
+      if (!savedData) {
+        console.log("[NLC Tracker] Cloud empty or unavailable. Checking LocalStorage...");
+        const localResult = localStorage.getItem(STORAGE_KEY);
+        if (localResult) {
+          try {
+            savedData = JSON.parse(localResult);
+            console.log("[NLC Tracker] Local load successful.");
+          } catch (e) {
+            console.error("[NLC Tracker] JSON parse error (Local):", e);
+          }
+        }
+      }
+
+      // STEP C: Apply Loaded Data or start fresh
+      if (savedData && Array.isArray(savedData.nlcReports) && savedData.nlcReports.length > 0) {
+        setNlcReports(savedData.nlcReports);
+        // Ensure the ID we want to select actually exists
+        const exists = savedData.nlcReports.some((r: any) => r.id === savedData.selectedReportId);
+        setSelectedReportId(exists ? savedData.selectedReportId : savedData.nlcReports[0].id);
+      } else {
+        console.log("[NLC Tracker] No existing data found. Creating default report.");
+        const initialReport = createBlankReport();
+        setNlcReports([initialReport]);
+        setSelectedReportId(initialReport.id);
+      }
+
+      setIsLoading(false);
+    };
+
+    initApp();
+  }, []);
+
+  // --- 2. Auto-Save: Persistent Sync ---
+  useEffect(() => {
+    if (isLoading) return;
+
     setSaveStatus('saving');
     const timer = setTimeout(() => {
       const dataToSave = { nlcReports, selectedReportId };
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(dataToSave));
-      setSaveStatus('saved');
-    }, 500); 
+      const jsonString = JSON.stringify(dataToSave);
+      
+      // Local Save
+      localStorage.setItem(STORAGE_KEY, jsonString);
+
+      // Cloud Save
+      if (isGasEnv) {
+        google.script.run
+          .withSuccessHandler(() => setSaveStatus('saved'))
+          .withFailureHandler(() => setSaveStatus('error'))
+          .saveReports(jsonString);
+      } else {
+        setSaveStatus('saved');
+      }
+    }, 1200);
+
     return () => clearTimeout(timer);
+  }, [nlcReports, selectedReportId, isLoading]);
+
+  // --- 3. Current Report Logic ---
+  const currentReport = useMemo(() => {
+    return nlcReports.find(r => r.id === selectedReportId) || null;
   }, [nlcReports, selectedReportId]);
 
-  // --- NLC Report Management Callbacks ---
-  const handleSelectReport = useCallback((id: string) => {
-    setSelectedReportId(id);
-    setAiResult(null); // Clear AI result when switching reports
-  }, []);
+  const updateCurrentReport = useCallback((field: keyof NLCReport, data: any) => {
+    if (!selectedReportId) return;
+    setNlcReports(prev => prev.map(r => r.id === selectedReportId ? { ...r, [field]: data } : r));
+  }, [selectedReportId]);
 
-  const handleAddReport = useCallback(() => {
-    const newReportId = Math.random().toString(36).substr(2, 9);
-    const newReport: NLCReport = {
-      id: newReportId,
-      header: {
-        nlcNo: (nlcReports.length + 1).toString().padStart(3, '0'), // Simple auto-increment NLC No
-        region: 'New Region',
-        areaPastor: 'New Pastor',
-        leaderName: 'New Leader',
-        coLeader: '',
-        year: new Date().getFullYear().toString()
-      },
-      members: [],
-      updates: CATEGORIES.map(cat => ({ category: cat, q1: '', q2: '', q3: '', q4: '' })),
-    };
+  const handleAddReport = () => {
+    const newReport = createBlankReport();
     setNlcReports(prev => [...prev, newReport]);
-    setSelectedReportId(newReportId);
+    setSelectedReportId(newReport.id);
     setAiResult(null);
-  }, [nlcReports.length]);
+  };
 
-  const handleDeleteReport = useCallback((id: string) => {
-    if (window.confirm('Are you sure you want to delete this NLC report? This cannot be undone.')) {
-      setNlcReports(prevReports => {
-        const updatedReports = prevReports.filter(report => report.id !== id);
-        // If the deleted report was the currently selected one,
-        // then select the first available report or null if no reports are left.
+  const handleDeleteReport = (id: string) => {
+    if (window.confirm("Delete this report permanently?")) {
+      setNlcReports(prev => {
+        const filtered = prev.filter(r => r.id !== id);
         if (selectedReportId === id) {
-          setSelectedReportId(updatedReports.length > 0 ? updatedReports[0].id : null);
+          setSelectedReportId(filtered.length > 0 ? filtered[0].id : null);
         }
-        return updatedReports;
+        return filtered;
       });
       setAiResult(null);
     }
-  }, [selectedReportId]); // Only selectedReportId is needed in dependency for checking
+  };
 
-  // --- Update handlers for current report's data ---
-  const updateCurrentReport = useCallback((field: 'header' | 'members' | 'updates', data: any) => {
-    if (!selectedReportId) return;
-
-    setNlcReports(prevReports =>
-      prevReports.map(report =>
-        report.id === selectedReportId
-          ? { ...report, [field]: data }
-          : report
-      )
-    );
-  }, [selectedReportId]);
-
-  const handleHeaderChange = useCallback((data: GroupHeaderData) => {
-    updateCurrentReport('header', data);
-  }, [updateCurrentReport]);
-
-  const handleMembersUpdate = useCallback((data: Member[]) => {
-    updateCurrentReport('members', data);
-  }, [updateCurrentReport]);
-
-  const handleUpdatesUpdate = useCallback((data: QuarterlyUpdate[]) => {
-    updateCurrentReport('updates', data);
-  }, [updateCurrentReport]);
-
-  // --- AI Analysis ---
-  const handleAnalyze = async () => {
+  const handleRunAi = async () => {
     if (!currentReport) return;
     setIsAnalyzing(true);
-    const result = await analyzeReport(currentReport.header, currentReport.members, currentReport.updates);
-    setAiResult(result);
-    setIsAnalyzing(false);
-  };
-
-  // --- Utility Functions ---
-  const handlePrint = () => {
-    window.print();
-  };
-
-  const handleReset = () => {
-    if (window.confirm('Are you sure you want to clear ALL NLC Reports data? This cannot be undone.')) {
-      localStorage.removeItem(STORAGE_KEY);
-      window.location.reload();
+    try {
+      const result = await analyzeReport(currentReport.header, currentReport.members, currentReport.updates);
+      setAiResult(result);
+    } catch (e) {
+      setAiResult("Analysis failed. Please check your network or API settings.");
+    } finally {
+      setIsAnalyzing(false);
     }
   };
 
-  const handleExport = () => {
-    const data = { nlcReports, selectedReportId, timestamp: new Date().toISOString() };
-    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = `nlc_tracker_database_backup_${new Date().toISOString().split('T')[0]}.json`;
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    URL.revokeObjectURL(url);
-  };
-
-  const handleImportClick = () => {
-    fileInputRef.current?.click();
-  };
-
-  const handleFileImport = (event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    if (!file) return;
-
-    const reader = new FileReader();
-    reader.onload = (e) => {
-      try {
-        const json = JSON.parse(e.target?.result as string);
-        if (json.nlcReports && Array.isArray(json.nlcReports) && (json.selectedReportId === null || typeof json.selectedReportId === 'string')) {
-          if (window.confirm('This will overwrite all your current NLC Reports data. Continue?')) {
-            setNlcReports(json.nlcReports);
-            // Ensure selectedReportId exists in the imported reports
-            if (json.nlcReports.some((r: NLCReport) => r.id === json.selectedReportId)) {
-              setSelectedReportId(json.selectedReportId);
-            } else if (json.nlcReports.length > 0) {
-              setSelectedReportId(json.nlcReports[0].id);
-            } else {
-              setSelectedReportId(null);
-            }
-            setAiResult(null);
-            alert('NLC Reports database imported successfully!');
-          }
-        } else {
-          alert('Invalid file format. Please use a valid NLC Reports backup JSON file.');
-        }
-      } catch (err) {
-        alert('Failed to read file. Please ensure it is a valid JSON file.');
-      }
-    };
-    reader.readAsText(file);
-    event.target.value = ''; // Reset input so the same file can be picked again
-  };
-
-  const isEditingEnabled = currentReport !== undefined && currentReport !== null;
+  // --- 4. Loading State View ---
+  if (isLoading) {
+    return (
+      <div className="h-screen w-full flex items-center justify-center bg-slate-900 text-white">
+        <div className="flex flex-col items-center">
+          <div className="w-12 h-12 border-4 border-indigo-400 border-t-transparent rounded-full animate-spin mb-4"></div>
+          <p className="text-sm font-bold uppercase tracking-widest text-indigo-300">NLC Tracker Connecting...</p>
+          <p className="text-[10px] text-slate-500 mt-2">Checking Google Properties Store</p>
+        </div>
+      </div>
+    );
+  }
 
   return (
-    <div className="min-h-screen bg-slate-50 p-4 lg:p-6 transition-all">
-      <style>{`
-        @media print {
-          @page {
-            size: landscape;
-            margin: 5mm;
-          }
-          body {
-            background: #ffffff !important;
-            -webkit-print-color-adjust: exact !important;
-            print-color-adjust: exact !important;
-            font-size: 9pt;
-          }
-          .min-h-screen {
-            padding: 0 !important;
-            background: #ffffff !important;
-          }
-          .max-w-screen-2xl, .max-w-\\[1920px\\] {
-            max-width: none !important;
-            width: 100% !important;
-          }
-          .print-grid-layout {
-            display: grid !important;
-            grid-template-columns: 3.5fr 8.5fr !important;
-            gap: 10px !important;
-            align-items: start !important;
-          }
-          .shadow-2xl, .shadow-sm, .shadow-lg, .shadow-xl {
-            box-shadow: none !important;
-          }
-          .rounded-3xl, .rounded-2xl {
-            border-radius: 4px !important;
-            border: 1px solid #cbd5e1 !important;
-          }
-          .bg-white {
-            background: white !important;
-          }
-          button, .print-hidden, .file-input {
-            display: none !important;
-          }
-          input, select, textarea {
-            border: none !important;
-            background: transparent !important;
-            padding: 1px !important;
-            font-weight: 500 !important;
-          }
-          textarea {
-            height: auto !important;
-            min-height: unset !important;
-          }
-          .bg-indigo-900 { background-color: #1e1b4b !important; }
-          .section-block {
-            page-break-inside: avoid;
-            break-inside: avoid;
-          }
-        }
-      `}</style>
-
-      <input 
-        type="file" 
-        ref={fileInputRef} 
-        onChange={handleFileImport} 
-        accept=".json" 
-        className="hidden file-input" 
-      />
-
-      <div className="max-w-[1920px] mx-auto">
-        <header className="flex flex-col md:flex-row justify-between items-center gap-4 mb-6 px-4 print-hidden">
+    <div className="min-h-screen bg-slate-50 selection:bg-indigo-100 pb-20">
+      <div className="max-w-7xl mx-auto p-4 md:p-8 space-y-6">
+        
+        {/* Top Header Bar */}
+        <header className="bg-white border border-slate-200 p-6 rounded-3xl shadow-sm flex flex-col md:flex-row items-center justify-between gap-4">
           <div className="flex items-center gap-4">
-            <div className="h-12 w-12 bg-indigo-900 rounded-xl flex items-center justify-center text-white shadow-lg">
-              <svg className="w-7 h-7" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-              </svg>
+            <div className="w-12 h-12 bg-indigo-600 rounded-2xl flex items-center justify-center text-white shadow-indigo-200 shadow-xl">
+              <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M13 10V3L4 14h7v7l9-11h-7z" /></svg>
             </div>
             <div>
-              <div className="flex items-center gap-3">
-                <h1 className="text-2xl font-black text-slate-900 tracking-tight leading-none uppercase">NLC Leadership Tracker</h1>
-                <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full uppercase transition-all ${saveStatus === 'saved' ? 'bg-green-100 text-green-700' : 'bg-amber-100 text-amber-700 animate-pulse'}`}>
-                  {saveStatus === 'saved' ? '✓ Auto-Saved (Browser)' : '... Syncing'}
-                </span>
-              </div>
-              <p className="text-indigo-600 font-bold uppercase tracking-widest text-[10px] mt-1">Full Landscape Reporting Method</p>
+              <h1 className="text-2xl font-black text-slate-900 leading-none">NLC MANAGER</h1>
+              <p className="text-[10px] text-indigo-500 font-bold uppercase mt-1 tracking-widest">Leadership Performance Audit</p>
             </div>
           </div>
           
           <div className="flex items-center gap-3">
-            {/* Primary Actions */}
+            <button onClick={() => window.print()} className="px-5 py-2.5 rounded-xl border-2 border-slate-100 text-xs font-bold uppercase hover:bg-slate-50 transition-all active:scale-95">Print PDF</button>
             <button 
-              onClick={handleExport}
-              className="flex items-center gap-2 bg-indigo-600 text-white px-6 py-2.5 rounded-xl font-bold hover:bg-indigo-700 transition-all shadow-lg active:scale-95"
-              title="Download local database backup as a file"
+              onClick={handleRunAi}
+              disabled={isAnalyzing || !currentReport}
+              className="px-6 py-2.5 bg-indigo-600 text-white rounded-xl text-xs font-bold uppercase shadow-lg shadow-indigo-100 hover:bg-indigo-700 transition-all active:scale-95 disabled:opacity-50"
             >
-              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 16v1a2 2 0 002 2h12a2 2 0 002-2v-1m-4-4l-4 4m0 0l-4-4m4 4V4" /></svg>
-              Save Database (File)
+              {isAnalyzing ? 'Processing...' : 'Run AI Audit'}
             </button>
-
-            <button 
-              onClick={handlePrint}
-              className="flex items-center gap-2 bg-white text-slate-700 px-5 py-2.5 rounded-xl border border-slate-200 font-bold hover:border-indigo-600 hover:text-indigo-600 transition-all shadow-sm"
-              title="Print current report in landscape format"
-              disabled={!isEditingEnabled}
-            >
-              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z" />
-              </svg>
-              Print Report
-            </button>
-            
-            <button 
-              onClick={handleAnalyze}
-              disabled={isAnalyzing || !isEditingEnabled}
-              className={`flex items-center gap-2 bg-indigo-900 text-white px-6 py-2.5 rounded-xl font-bold hover:bg-black transition-all shadow-lg active:scale-95 ${isAnalyzing || !isEditingEnabled ? 'opacity-50 cursor-not-allowed' : ''}`}
-              title="Get AI-powered analysis of your report"
-            >
-              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 10V3L4 14h7v7l9-11h-7z" /></svg>
-              {isAnalyzing ? 'Analyzing...' : 'AI Audit'}
-            </button>
-
-            {/* Utility Actions */}
-            <div className="flex bg-slate-200/50 p-1 rounded-xl gap-1 ml-4"> {/* Added ml-4 for separation */}
-              <button 
-                onClick={handleImportClick}
-                className="flex items-center gap-2 bg-white text-slate-700 px-4 py-2 rounded-lg border border-slate-200 text-xs font-bold hover:text-indigo-600 transition-all shadow-sm"
-                title="Load database from a backup file"
-              >
-                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 16v1a2 2 0 002 2h12a2 2 0 002-2v-1m-4-8l-4-4m0 0L8 8m4-4v12" /></svg>
-                Import
-              </button>
-              <button 
-                onClick={handleReset}
-                className="flex items-center gap-2 bg-white text-slate-700 px-4 py-2 rounded-lg border border-slate-200 text-xs font-bold hover:text-red-500 transition-all shadow-sm"
-                title="Clear all data (resets to default)"
-              >
-                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
-                Reset
-              </button>
-            </div>
           </div>
         </header>
 
-        {/* Main Landscape Ledger Container */}
-        <div className="bg-white border border-slate-200 rounded-2xl shadow-xl p-4 lg:p-8 space-y-8 relative overflow-hidden">
-          <div className="absolute top-0 left-0 w-full h-2 bg-indigo-900 print:h-1"></div>
-          
-          <NLCReportManager
-            reports={nlcReports}
-            selectedReportId={selectedReportId}
-            onSelectReport={handleSelectReport}
-            onAddReport={handleAddReport}
-            onDeleteReport={handleDeleteReport}
-          />
+        {/* Report Selector Section */}
+        <NLCReportManager 
+          reports={nlcReports}
+          selectedReportId={selectedReportId}
+          onSelectReport={setSelectedReportId}
+          onAddReport={handleAddReport}
+          onDeleteReport={handleDeleteReport}
+        />
 
-          {!isEditingEnabled && nlcReports.length > 0 && (
-            <div className="text-center text-slate-600 py-10 border border-dashed border-slate-200 rounded-xl bg-slate-50">
-              <p className="text-lg font-bold mb-2">No NLC Report Selected</p>
-              <p className="text-sm">Please select a report from the "Manage NLC Reports" section above to view or edit its data.</p>
-            </div>
-          )}
+        {/* Main Editor Surface */}
+        {currentReport ? (
+          <main className="bg-white border border-slate-200 rounded-3xl shadow-2xl p-6 md:p-8 space-y-10 relative overflow-hidden">
+            <div className="absolute top-0 left-0 w-full h-1.5 bg-indigo-600"></div>
 
-          {!isEditingEnabled && nlcReports.length === 0 && (
-            <div className="text-center text-slate-600 py-10 border border-dashed border-slate-200 rounded-xl bg-slate-50">
-              <p className="text-lg font-bold mb-2">No NLC Reports Available</p>
-              <p className="text-sm">Click "Add New Report" above to create your first NLC report.</p>
-            </div>
-          )}
+            <GroupHeader 
+              data={currentReport.header} 
+              onChange={data => updateCurrentReport('header', data)} 
+              isEnabled={true} 
+            />
 
-          {isEditingEnabled && currentReport && (
-            <>
-              <div className="section-block">
-                <GroupHeader data={currentReport.header} onChange={handleHeaderChange} isEnabled={isEditingEnabled} />
+            {aiResult && (
+              <section className="bg-slate-900 text-slate-100 p-8 rounded-3xl shadow-2xl animate-in fade-in slide-in-from-bottom-4 relative">
+                <button onClick={() => setAiResult(null)} className="absolute top-4 right-4 p-2 hover:bg-slate-800 rounded-full transition-all text-slate-500 hover:text-white">
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" d="M6 18L18 6M6 6l12 12" /></svg>
+                </button>
+                <div className="flex items-center gap-3 mb-4">
+                  <span className="w-3 h-3 bg-indigo-500 rounded-full animate-pulse"></span>
+                  <h3 className="text-xs font-black uppercase tracking-[0.2em] text-indigo-400">AI Intelligence Report</h3>
+                </div>
+                <div className="prose prose-invert prose-sm max-w-none text-slate-300 leading-relaxed font-medium">
+                  {aiResult}
+                </div>
+              </section>
+            )}
+
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
+              <div className="lg:col-span-4 sticky top-6">
+                <MembersTable 
+                  members={currentReport.members} 
+                  onUpdate={m => updateCurrentReport('members', m)} 
+                  isEnabled={true} 
+                />
               </div>
-
-              {aiResult && (
-                <div className="section-block bg-indigo-50/30 border-l-4 border-indigo-900 rounded-r-xl p-6 relative animate-in fade-in slide-in-from-top-2 duration-300 print:bg-white print:border-slate-200">
-                  <button onClick={() => setAiResult(null)} className="absolute top-3 right-3 text-slate-400 hover:text-red-500 print:hidden">
-                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" /></svg>
-                  </button>
-                  <h3 className="text-indigo-900 font-bold text-sm mb-2 uppercase tracking-wider flex items-center gap-2">
-                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
-                    AI Performance Analysis
-                  </h3>
-                  <div className="prose prose-slate prose-sm max-w-none text-slate-700 whitespace-pre-wrap leading-relaxed">
-                    {aiResult}
-                  </div>
-                </div>
-              )}
-
-              {/* Adjacent Side-by-Side Layout */}
-              <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start print-grid-layout">
-                <div className="lg:col-span-4 section-block h-full">
-                  <MembersTable members={currentReport.members} onUpdate={handleMembersUpdate} isEnabled={isEditingEnabled} />
-                </div>
-                <div className="lg:col-span-8 section-block h-full">
-                  <QuarterlyMetrics updates={currentReport.updates} onUpdate={handleUpdatesUpdate} isEnabled={isEditingEnabled} />
-                </div>
+              <div className="lg:col-span-8">
+                <QuarterlyMetrics 
+                  updates={currentReport.updates} 
+                  onUpdate={u => updateCurrentReport('updates', u)} 
+                  isEnabled={true} 
+                />
               </div>
-            </>
-          )}
-        </div>
+            </div>
+          </main>
+        ) : (
+          <div className="bg-white border-2 border-dashed border-slate-200 rounded-3xl p-20 text-center">
+            <div className="mb-4 inline-flex w-16 h-16 bg-slate-50 rounded-full items-center justify-center text-slate-300">
+              <svg className="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 13h6m-3-3v6m5 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
+            </div>
+            <h3 className="text-lg font-bold text-slate-900">No Reports Available</h3>
+            <p className="text-slate-500 text-sm mt-1 max-w-xs mx-auto">Get started by creating your first NLC Leadership report to track growth and performance.</p>
+            <button 
+              onClick={handleAddReport}
+              className="mt-6 px-8 py-3 bg-indigo-600 text-white rounded-2xl text-sm font-bold uppercase shadow-xl shadow-indigo-100 hover:scale-105 transition-all"
+            >
+              Create New Report
+            </button>
+          </div>
+        )}
 
-        <footer className="flex flex-col md:flex-row justify-between items-center py-6 px-4 text-slate-400 font-bold text-[9px] uppercase tracking-[0.2em] print:mt-4">
-          <p>NLC LEADERSHIP TRACKER • LANDSCAPE MODE</p>
-          <p className="mt-2 md:mt-0">© {new Date().getFullYear()} CONFIDENTIAL • Data auto-saved to browser & exportable as file</p>
+        {/* Global Status Footer */}
+        <footer className="fixed bottom-4 left-1/2 -translate-x-1/2 flex items-center gap-4 bg-white/80 backdrop-blur-md px-6 py-3 rounded-full border border-slate-200 shadow-2xl z-50 transition-all">
+          <div className="flex items-center gap-2">
+            <span className={`w-2 h-2 rounded-full ${isGasEnv ? 'bg-green-500' : 'bg-amber-400 animate-pulse'}`}></span>
+            <span className="text-[10px] font-bold uppercase text-slate-600 tracking-tighter">
+              {isGasEnv ? 'Cloud Storage Active' : 'Local Storage Mode'}
+            </span>
+          </div>
+          <div className="h-3 w-[1px] bg-slate-300"></div>
+          <div className="flex items-center gap-2">
+            <span className={`text-[10px] font-bold uppercase tracking-tighter ${saveStatus === 'saved' ? 'text-green-600' : saveStatus === 'error' ? 'text-red-600' : 'text-indigo-600 animate-pulse'}`}>
+              {saveStatus === 'saved' ? 'All Changes Saved' : saveStatus === 'error' ? 'Save Error' : 'Syncing...'}
+            </span>
+          </div>
         </footer>
       </div>
     </div>
